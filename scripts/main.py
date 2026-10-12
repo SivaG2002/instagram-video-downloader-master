@@ -1,0 +1,89 @@
+import asyncio
+from pathlib import Path
+import shutil
+import discord
+from discord.ext import commands
+import download_instagram_video
+import datetime
+import os
+import compress
+
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+def flush_download_folder(download_dir="download"):
+    download_path = Path(download_dir)
+    download_path.mkdir(parents=True, exist_ok=True)
+
+    for item in download_path.iterdir():
+        if item.is_file() or item.is_symlink():
+            item.unlink()
+        elif item.is_dir():
+            shutil.rmtree(item)
+
+    return download_path
+
+
+def is_download_folder_empty(download_dir="download"):
+    download_path = Path(download_dir)
+    download_path.mkdir(parents=True, exist_ok=True)
+    return not any(download_path.iterdir())
+
+
+@bot.command(name="reel")
+async def reel(ctx, link: str):
+    username = ctx.author.name
+    print(f"Received request from {username} for link: {link}")
+    fetched_video_path = await fetch_reels_video(link, username)
+    await send_video(ctx, fetched_video_path)
+    print(f"Sent video to {username}")
+    if Path(fetched_video_path).exists():
+        os.remove(fetched_video_path)
+
+
+    
+  
+
+async def fetch_reels_video(url, username):
+    return await asyncio.to_thread(process_video, url, username)
+
+
+
+
+def process_video(url, username):
+    download_dir = Path("download")
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    if not is_download_folder_empty():
+        print("Download folder is not empty. Clearing it before processing.")
+        flush_download_folder()
+
+    temp_file_path = Path(f"download/{username}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_temp_video.mp4")
+    download_instagram_video.download_instagram_post(url, temp_file_path)
+    compress_path = Path(f"download/{username}_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_compressed_video.mp4")
+    if compress.check_video_size(temp_file_path):
+                    print(f"{temp_file_path} is less than or equal to 10 MB.")
+    else:
+        print(f"{temp_file_path} is larger than 10 MB. Compressing...")
+        
+        try:
+            compress.compress_video(temp_file_path, compress_path)
+            print(f"Compressed video saved as: {compress_path}")
+            temp_file_path = compress_path  # Update temp_file_path to point to the compressed video
+        except Exception as e:
+            print(f"Compression failed for {temp_file_path}: {e}")
+
+
+    return temp_file_path
+
+
+async def send_video(ctx, video_path):
+    await ctx.send(file=discord.File(video_path))
+
+
+bot.run(TOKEN)
